@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { VoiceBridge } from "./server.ts";
 import { Subtitler } from "./oral.ts";
 import { Narrator } from "./narrate.ts";
+import { Describer } from "./describe.ts";
 
 const DIR = join(homedir(), ".pi", "voice-bridge");
 const ACTIVE = join(DIR, "active.json");
@@ -25,6 +26,37 @@ let bridge: VoiceBridge | null = null;
 let lock: Lock | null = null;
 let subtitler: Subtitler | null = null;
 let narrator: Narrator | null = null;
+let describer: Describer | null = null;
+let frameSeq = 0;
+let lastSayId = "";
+
+function emitFrame(type: "say" | "narrate", text: string, replaces?: string): string {
+  const id = `f${++frameSeq}`;
+  bridge?.emit(replaces ? { type, id, text, replaces } : { type, id, text });
+  return id;
+}
+
+function makeDescriber(ctx: ExtensionContext): Describer | null {
+  const provider = process.env.PI_VOICE_BRIDGE_DESCRIBER_PROVIDER ?? "anthropic";
+  const modelId = process.env.PI_VOICE_BRIDGE_DESCRIBER_MODEL ?? "claude-haiku-4-5";
+  const model = ctx.modelRegistry.find(provider, modelId);
+  if (!model) return null;
+  return new Describer({
+    allowCode: process.env.PI_VOICE_BRIDGE_ALLOW_CODE === "1",
+    complete: async (prompt, signal) => {
+      const answer = await ctx.modelRegistry.complete(
+        model,
+        { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
+        { signal },
+      );
+      return answer.content
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join(" ")
+        .trim();
+    },
+    out: (text, replaces) => emitFrame("narrate", text, replaces),
+  });
+}
 
 function sessionFileOf(ctx: ExtensionContext): string {
   return ctx.sessionManager.getSessionFile() ?? "";
@@ -103,8 +135,16 @@ async function startBridge(pi: ExtensionAPI, ctx: ExtensionContext): Promise<num
       ctx.ui.notify("abort reçu (barge-in)", "info");
     },
   });
-  subtitler = new Subtitler((text) => bridge?.emit({ type: "say", text }));
-  narrator = new Narrator((text) => bridge?.emit({ type: "narrate", text }));
+  describer = makeDescriber(ctx);
+  subtitler = new Subtitler(
+    (text) => {
+      lastSayId = emitFrame("say", text);
+    },
+    (block) => {
+      void describer?.describe({ kind: block.kind, text: block.text, lines: block.lines }, lastSayId);
+    },
+  );
+  narrator = new Narrator((text) => emitFrame("narrate", text));
   return bridge.port;
 }
 
@@ -112,6 +152,7 @@ async function stopBridge(): Promise<void> {
   subtitler = null;
   narrator?.close();
   narrator = null;
+  describer = null;
   if (bridge) {
     await bridge.close();
     bridge = null;
@@ -173,7 +214,10 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("tool_execution_end", (event) => {
-    narrator?.end(event.toolName, event.isError, errorText(event.result));
+    const text = errorText(event.result);
+    narrator?.end(event.toolName, event.isError, text);
+    if (!text || narrator?.verbosity === "silencieux") return;
+    void describer?.describe({ kind: "tool_result", tool: event.toolName, text });
   });
 
   pi.on("session_start", async (event, ctx) => {

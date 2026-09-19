@@ -51,15 +51,25 @@ function plural(n: number): string {
 }
 
 /** Consomme les text_delta d'un run Pi et rend des phrases prêtes à dire (un flux à la fois). */
+export interface Block {
+  kind: "code" | "diff";
+  lines: number;
+  text: string;
+  marker: string;
+}
+
 export class Subtitler {
   private buf = "";
   private fence: string | null = null;
   private fenceLines = 0;
+  private fenceText: string[] = [];
   private tableLines = 0;
   private readonly out: (text: string) => void;
+  private readonly onBlock: ((block: Block) => void) | undefined;
 
-  constructor(out: (text: string) => void) {
+  constructor(out: (text: string) => void, onBlock?: (block: Block) => void) {
     this.out = out;
+    this.onBlock = onBlock;
   }
 
   push(delta: string): void {
@@ -79,7 +89,10 @@ export class Subtitler {
     }
     if (this.fence !== null) {
       if (final) {
-        if (this.buf.trim()) this.fenceLines += 1;
+        if (this.buf.trim()) {
+          this.fenceLines += 1;
+          this.fenceText.push(this.buf);
+        }
         this.buf = "";
         this.closeFence();
       }
@@ -103,8 +116,12 @@ export class Subtitler {
 
   private line(line: string): void {
     if (this.fence !== null) {
-      if (/^\s*```/.test(line)) this.closeFence();
-      else this.fenceLines += 1;
+      if (/^\s*```/.test(line)) {
+        this.closeFence();
+      } else {
+        this.fenceLines += 1;
+        this.fenceText.push(line);
+      }
       return;
     }
     const fence = /^\s*```(\w*)/.exec(line);
@@ -112,6 +129,7 @@ export class Subtitler {
       this.flushTable();
       this.fence = (fence[1] ?? "").toLowerCase();
       this.fenceLines = 0;
+      this.fenceText = [];
       return;
     }
     if (/^\s*\|/.test(line)) {
@@ -123,10 +141,18 @@ export class Subtitler {
   }
 
   private closeFence(): void {
-    const kind = this.fence === "diff" ? "diff" : "bloc de code";
-    this.out(`(${kind}, ${plural(this.fenceLines)})`);
+    const diff = this.fence === "diff";
+    const marker = `(${diff ? "diff" : "bloc de code"}, ${plural(this.fenceLines)})`;
+    this.out(marker);
+    this.onBlock?.({
+      kind: diff ? "diff" : "code",
+      lines: this.fenceLines,
+      text: this.fenceText.join("\n"),
+      marker,
+    });
     this.fence = null;
     this.fenceLines = 0;
+    this.fenceText = [];
   }
 
   private flushTable(): void {

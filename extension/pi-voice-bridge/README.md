@@ -3,15 +3,16 @@
 Extension Pi (composant A du pont vocal) — parler à la session Pi vivante en marchant.
 
 Couvre les tickets #1 (verrou + serveur WS base), #2 (`user_text` → injection), #3 (`say`,
-sous-titres du texte de Pi) et #4 (`narrate`, narration d'outils).
+sous-titres du texte de Pi), #4 (`narrate`, narration d'outils) et #5 (descripteur).
 
 ## Fichiers
 
 - `server.ts` — serveur WebSocket 127.0.0.1 pur, protocole testable sans session Pi.
 - `oral.ts` — segmentation en phrases + nettoyage oral des `text_delta` (pur, sans WS).
 - `narrate.ts` — gabarits FR d'outils, verbosité, regroupement 3 s, file derrière un say.
+- `describe.ts` — descripteur hors session (petit modèle), délai 2,5 s, budget, `allowCode`.
 - `index.ts` — extension Pi : `/voice on|off|status`, verrou, injection, sous-titres, auto-réactivation.
-- `server.test.ts` / `oral.test.ts` / `narrate.test.ts` — tests aux deux seams de la spec.
+- `*.test.ts` — tests aux deux seams de la spec (protocole WS + extension isolée).
 
 ## Usage
 
@@ -35,8 +36,14 @@ Nettoyage oral : bloc de code/diff → `(bloc de code, N lignes)` / `(diff, N li
 `(tableau, N lignes)`, chemin → nom de base, URL → domaine, markdown et puces retirés, secrets →
 `(secret masqué)`. Tampon forcé à 400 caractères, jamais de troncature. `message_end` vide le tampon.
 
-Le descripteur (envoyer le bloc de code à un petit modèle) est le ticket #5, pas encore câblé :
-le marqueur est dit, le contenu n'est jamais lu cru.
+## Descripteur (`narrate` avec `replaces`)
+
+Résultat d'outil et bloc de code partent à un petit modèle **hors session** (`modelRegistry.complete`,
+claude-haiku-4-5 par défaut) : une phrase de 15 mots max, ni contexte ni run Pi consommé.
+Délai 2,5 s (au-delà, le gabarit seul), budget 60 appels/h, secrets masqués avant envoi.
+`allowCode:false` (défaut) : aucun bloc de code n'est envoyé au fournisseur, et les blocs fencés
+des résultats d'outils deviennent `(code retiré)`. La description revenue à temps porte
+`replaces: <id du gabarit>` — toute trame `say`/`narrate` porte un `id`.
 
 ## Narration (`narrate`)
 
@@ -61,7 +68,7 @@ parole est mise en file (followUp), elle ne coupe pas le run. Source distinguée
 
 ```bash
 cd extension/pi-voice-bridge
-node --experimental-strip-types --test *.test.ts                     # 27/27
+node --experimental-strip-types --test *.test.ts                     # 34/34
 npx tsc                                                             # 0 erreur
 ```
 
@@ -69,3 +76,5 @@ npx tsc                                                             # 0 erreur
 
 - `PI_VOICE_BRIDGE_TOKEN` — token dédié (sinon généré et persisté dans active.json).
 - `PI_VOICE_BRIDGE_PORT` — port (défaut 8766, libre — 8765 pris par edge-tts).
+- `PI_VOICE_BRIDGE_DESCRIBER_PROVIDER` / `_MODEL` — descripteur (défaut anthropic / claude-haiku-4-5).
+- `PI_VOICE_BRIDGE_ALLOW_CODE=1` — autorise l'envoi de code au descripteur (défaut : non).
