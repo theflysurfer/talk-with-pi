@@ -15,5 +15,5 @@
       ]
     }
   },
-  "include": ["index.ts", "server.ts", "oral.ts"]
+  "include": ["index.ts", "server.ts", "oral.ts", "narrate.ts"]
 }

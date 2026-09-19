@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { VoiceBridge } from "./server.ts";
 import { Subtitler } from "./oral.ts";
+import { Narrator } from "./narrate.ts";
 
 const DIR = join(homedir(), ".pi", "voice-bridge");
 const ACTIVE = join(DIR, "active.json");
@@ -23,6 +24,7 @@ interface Lock {
 let bridge: VoiceBridge | null = null;
 let lock: Lock | null = null;
 let subtitler: Subtitler | null = null;
+let narrator: Narrator | null = null;
 
 function sessionFileOf(ctx: ExtensionContext): string {
   return ctx.sessionManager.getSessionFile() ?? "";
@@ -68,6 +70,13 @@ async function releaseLock(): Promise<void> {
   lock = null;
 }
 
+function errorText(result: unknown): string | undefined {
+  if (typeof result === "string") return result;
+  const r = (result ?? {}) as { output?: unknown; message?: unknown; error?: unknown };
+  for (const v of [r.error, r.message, r.output]) if (typeof v === "string" && v.trim()) return v;
+  return undefined;
+}
+
 function loadToken(): string {
   const env = process.env.PI_VOICE_BRIDGE_TOKEN;
   if (env) return env;
@@ -87,18 +96,22 @@ async function startBridge(pi: ExtensionAPI, ctx: ExtensionContext): Promise<num
       pi.sendUserMessage(text, { deliverAs: "followUp" });
     },
     onSetVerbosity(level: string) {
-      ctx.ui.notify(`verbosity → ${level || "default"}`, "info");
+      const applied = narrator?.setVerbosity(level);
+      ctx.ui.notify(`verbosity → ${applied ?? level}`, "info");
     },
     onAbort() {
       ctx.ui.notify("abort reçu (barge-in)", "info");
     },
   });
   subtitler = new Subtitler((text) => bridge?.emit({ type: "say", text }));
+  narrator = new Narrator((text) => bridge?.emit({ type: "narrate", text }));
   return bridge.port;
 }
 
 async function stopBridge(): Promise<void> {
   subtitler = null;
+  narrator?.close();
+  narrator = null;
   if (bridge) {
     await bridge.close();
     bridge = null;
@@ -145,11 +158,22 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("message_update", (event) => {
     const delta = event.assistantMessageEvent;
-    if (delta.type === "text_delta") subtitler?.push(delta.delta);
+    if (delta.type !== "text_delta") return;
+    narrator?.sayActive(true);
+    subtitler?.push(delta.delta);
   });
 
   pi.on("message_end", () => {
     subtitler?.end();
+    narrator?.sayActive(false);
+  });
+
+  pi.on("tool_execution_start", (event) => {
+    narrator?.start(event.toolName, event.args);
+  });
+
+  pi.on("tool_execution_end", (event) => {
+    narrator?.end(event.toolName, event.isError, errorText(event.result));
   });
 
   pi.on("session_start", async (event, ctx) => {
