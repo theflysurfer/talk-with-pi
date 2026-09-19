@@ -32,11 +32,16 @@
 
 ## P0 — Environnement PC (natif)
 
+> ⚠️ Révisé le 2026-09-19 (ADR 0005) : ni Pi Daemon :8790 ni edge-tts :8765 n'étaient ce que ce
+> tableau annonçait. Voir l'ADR pour la mesure. Les lignes ci-dessous sont à jour.
+
 | Élément | Action | État |
 |---|---|---|
-| Pi Daemon :8790 | tourne déjà (manueel). À envelopper en service persistant (LSM) pour la marche | up, à formaliser |
-| edge-tts :8765 | up | up |
-| pi-web | tourner `npm run start:sessiond` natif, ou enregistrer au LSM. Port + WS extension à choisir (8765 occupé par edge-tts) | à brancher |
+| paseo-tts-proxy :8791 | TTS Cartesia (OpenAI `/v1/audio/speech`), deux voix par requête | ✅ up, LSM, auto_start |
+| paseo-stt-proxy :8792 | STT Groq whisper (`/v1/audio/transcriptions`) | ✅ up, LSM, auto_start (UA corrigé) |
+| Pi Daemon :8790 | hors chemin de la voix ; port libéré (Datasette déplacé sur :8794) | registré, à la demande |
+| pi-web | `pi-web-server` :8504 + `pi-web-sessiond` :8505 (TCP), registrés et démarrés par LSM | ✅ up |
+| extension pi-voice-bridge | `pi install` global → `/voice` dans toute session, verrou mono-session | ✅ installée |
 | Relais VPS | vhost nginx `talk.srv759970.hstgr.cloud` → `10.77.208.239:<port>` + LE | à créer (rodé, ~30 min) |
 | Veille / démarrage | PC éveillé sur secteur pendant la marche ; services relancés au boot | à poser |
 | Zéro WSL2 | confirmé : Pi + Pi Daemon natifs | ✅ |
@@ -52,6 +57,8 @@
 - **Testable avec `wscat`** (pas de côté Android encore).
 
 **Critère** : taper `wscat` → envoyer `user_text` → Pi répond → `say` arrive segmenté.
+✅ **Atteint le 2026-09-19** (`extension/pi-voice-bridge/smoke_e2e.ts`) : session Pi réelle en RPC,
+`/voice on` → verrou :8766 → `hello`/`ready` → `user_text` → `state working` → `say` → 34 Ko d'audio.
 
 ## P2 — Extension : narration + regroupement + verbosité
 
@@ -102,9 +109,12 @@ descriptions, followUp pendant un run.
 
 ## Questions ouvertes restantes (à l'implémentation)
 
-1. Port du WS extension (8765 occupé par edge-tts) → proposer 8766 ou résolver.
-2. Pi Daemon : envelopper en service LSM permanent (marche = PC éveillé).
-3. Voix edge-tts Pi vs description : à choisir par écoute (ex. Henri=Pi, Denise=description).
-4. pi-web : statut LSM + port (default 8504).
-5. STT Groq : config Pi Daemon (provider `openai-whisper` / endpoint compatible Groq) — à valider.
-6. Descripteur : coût/latence réels de claude-haiku-4-5 sur un run de marche.
+1. ~~Port du WS extension~~ → **8766**, libre, en service.
+2. ~~Pi Daemon en service LSM~~ → hors chemin de la voix (ADR 0005).
+3. Voix Pi vs description → **Henri / Zoé** par défaut, **à valider à l'oreille par Julien**.
+4. ~~pi-web : statut LSM + port~~ → :8504 + sessiond :8505, registrés, démarrés par LSM.
+5. ~~STT Groq~~ → via paseo-stt-proxy :8792, transcription réelle vérifiée.
+6. Descripteur : coût/latence réels de claude-haiku-4-5 sur un run de marche — **toujours ouvert**
+   (testé sur faux modèle seulement).
+7. Nouveau : le relais VPS (P3) et le client PWA restent à faire ; l'audio circule aujourd'hui en
+   PCM brut (24 kHz mono) — à compresser avant de passer en 4G.
