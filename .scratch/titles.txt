@@ -1,0 +1,10 @@
+Verrou + serveur WebSocket base (composant A)
+user_text → injection dans la session Pi
+say — sous-titres du texte de Pi
+narrate — narration d'outils
+descripteur — audio-description par petit modèle
+TTS voix — say/narrate vers /tts (edge-tts, deux voix)
+STT voix — audio vers /stt puis injection (Groq)
+Relais VPS → PC (talk.srv759970.hstgr.cloud)
+Client Chrome PWA push-to-talk
+VAD mains-libres (v1.1)
