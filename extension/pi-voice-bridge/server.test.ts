@@ -1,8 +1,4 @@
-/**
- * Seam principle — protocole WebSocket (ticket #1 + #2) testé sans session Pi.
- * Critères #2 : user_text → callback ; ack state working / error ; followUp par défaut.
- * Critères #1 : hello token → ready / mauvais token → close ; ping→pong ; 1 client.
- */
+/** Tests du protocole WebSocket (seam principal de la spec) — sans session Pi. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
@@ -46,7 +42,7 @@ function recv(ws: WebSocket, pred: (f: any) => boolean): Promise<any> {
   });
 }
 
-test("hello avec token valide → ready", async () => {
+test("hello token valide → ready", async () => {
   const b = await makeBridge();
   const ws = await connect(b.port);
   ws.send(JSON.stringify({ type: "hello", token: TOKEN }));
@@ -56,12 +52,12 @@ test("hello avec token valide → ready", async () => {
   await b.close();
 });
 
-test("mauvais token → connexion fermée, pas de ready", async () => {
+test("mauvais token → connexion fermée", async () => {
   const b = await makeBridge();
   const ws = await connect(b.port);
   const closed = new Promise((r) => ws.on("close", (code) => r(code)));
   ws.send(JSON.stringify({ type: "hello", token: "nope" }));
-  assert.equal(await closed, 1008);
+  assert.equal((await closed) as number, 1008);
   await b.close();
 });
 
@@ -71,17 +67,16 @@ test("ping → pong", async () => {
   ws.send(JSON.stringify({ type: "hello", token: TOKEN }));
   await recv(ws, (f) => f.type === "ready");
   ws.send(JSON.stringify({ type: "ping" }));
-  const pong = await recv(ws, (f) => f.type === "pong");
-  assert.ok(pong);
+  await recv(ws, (f) => f.type === "pong");
   ws.close();
   await b.close();
 });
 
-test("user_text → onUserText appelé AVANT l'accusé working", async () => {
+test("user_text → onUserText appelé avant l'accusé working", async () => {
   let seen: string | null = null;
   const b = await makeBridge({
     async onUserText(text) {
-      seen = text; // marqueur: appelé avant l'ack (résolution asynchrone)
+      seen = text;
     },
   });
   const ws = await connect(b.port);
@@ -123,15 +118,13 @@ test("onUserText qui rejette → state phase=error avec reason", async () => {
   await b.close();
 });
 
-test("followUp par défaut : le callback injecté passe deliverAs followUp (= file si Pi occupé)", async () => {
+test("callback succès → ack working même si Pi occupé", async () => {
   let delivered = false;
   const b = await makeBridge({
     onUserText() {
       delivered = true;
     },
   });
-  // On vérifie au niveau index.ts que sendUserMessage reçoit { deliverAs: "followUp" };
-  // ici on prouve que le serveur émet l'ack seulement après succès du callback.
   const ws = await connect(b.port);
   ws.send(JSON.stringify({ type: "hello", token: TOKEN }));
   await recv(ws, (f) => f.type === "ready");
@@ -151,13 +144,12 @@ test("1 client à la fois : le nouveau remplace l'ancien", async () => {
   const ws2 = await connect(b.port);
   ws2.send(JSON.stringify({ type: "hello", token: TOKEN }));
   await recv(ws2, (f) => f.type === "ready");
-  assert.equal(await ws1Closed, 1001);
+  assert.equal((await ws1Closed) as number, 1001);
   ws2.close();
   await b.close();
 });
 
-test("WS lié à 127.0.0.1 uniquement (hôte par défaut)", async () => {
-  // le constructeur force { host: "127.0.0.1" }; on vérifie que l'adresse est locale.
+test("WS lié à 127.0.0.1 uniquement", async () => {
   const b = await makeBridge();
   await new Promise((r) => {
     const wss = (b as any).wss;

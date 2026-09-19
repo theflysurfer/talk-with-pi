@@ -1,21 +1,12 @@
-/**
- * pi-voice-bridge — parle à la session Pi vivante en marchant.
- *
- * Couvre tickets #1 (verrou + serveur WS base) et #2 (user_text → injection).
- *   - `/voice on|off|status` : prend/lâche/consulte le verrou active.json
- *   - serveur WS 127.0.0.1:<port> (token dédié, 1 client, hello/ready, ping/pong)
- *   - `user_text` → pi.sendUserMessage(text, { deliverAs: "followUp" }) + ack state
- *   - auto-réactivation au session_start si la session correspond au verrou
- *
- * Fichiers: ~/.pi/voice-bridge/active.json  { sessionFile, pid, since, port, token }
- */
+/** Extension Pi du pont vocal : verrou, serveur WS, injection, sous-titres (voir README). */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { mkdir, writeFile, readFile, unlink, access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { VoiceBridge } from "./server";
+import { VoiceBridge } from "./server.ts";
+import { Subtitler } from "./oral.ts";
 
 const DIR = join(homedir(), ".pi", "voice-bridge");
 const ACTIVE = join(DIR, "active.json");
@@ -31,6 +22,7 @@ interface Lock {
 
 let bridge: VoiceBridge | null = null;
 let lock: Lock | null = null;
+let subtitler: Subtitler | null = null;
 
 function sessionFileOf(ctx: ExtensionContext): string {
   return ctx.sessionManager.getSessionFile() ?? "";
@@ -53,7 +45,6 @@ async function pidAlive(pid: number): Promise<boolean> {
   }
 }
 
-/** Take or refresh the lock, only if not held by a live foreign session. */
 async function acquireLock(ctx: ExtensionContext, port: number, token: string): Promise<void> {
   const existing = await readLock();
   if (existing && existing.pid !== process.pid && (await pidAlive(existing.pid))) {
@@ -71,7 +62,6 @@ async function acquireLock(ctx: ExtensionContext, port: number, token: string): 
 
 async function releaseLock(): Promise<void> {
   const existing = await readLock();
-  // release only if we own it
   if (existing && existing.pid === process.pid) {
     await unlink(ACTIVE).catch(() => {});
   }
@@ -79,7 +69,6 @@ async function releaseLock(): Promise<void> {
 }
 
 function loadToken(): string {
-  // distinct token (env override for tests), else persistent random
   const env = process.env.PI_VOICE_BRIDGE_TOKEN;
   if (env) return env;
   const stored = lock?.token;
@@ -95,8 +84,6 @@ async function startBridge(pi: ExtensionAPI, ctx: ExtensionContext): Promise<num
 
   bridge = new VoiceBridge(port, token, {
     async onUserText(text: string) {
-      // followUp par défaut : pendant un run Pi, mise en file (ne coupe pas).
-      // steer seulement si une commande vocale explicite le demande (hors ticket #2).
       pi.sendUserMessage(text, { deliverAs: "followUp" });
     },
     onSetVerbosity(level: string) {
@@ -106,10 +93,12 @@ async function startBridge(pi: ExtensionAPI, ctx: ExtensionContext): Promise<num
       ctx.ui.notify("abort reçu (barge-in)", "info");
     },
   });
+  subtitler = new Subtitler((text) => bridge?.emit({ type: "say", text }));
   return bridge.port;
 }
 
 async function stopBridge(): Promise<void> {
+  subtitler = null;
   if (bridge) {
     await bridge.close();
     bridge = null;
@@ -154,11 +143,18 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
-  // Auto-réactivation au session_start : si cette session porte le verrou, on reprend.
+  pi.on("message_update", (event) => {
+    const delta = event.assistantMessageEvent;
+    if (delta.type === "text_delta") subtitler?.push(delta.delta);
+  });
+
+  pi.on("message_end", () => {
+    subtitler?.end();
+  });
+
   pi.on("session_start", async (event, ctx) => {
     const l = await readLock();
     if (!l) return;
-    // own pid is alive => we own the bridge already; reloaded session => restart.
     try {
       await access(ACTIVE, constants.F_OK);
     } catch {
@@ -168,7 +164,7 @@ export default function (pi: ExtensionAPI): void {
       try {
         await startBridge(pi, ctx);
       } catch {
-        // lock still held by a live pid (self pre-reload) — leave as-is
+        return;
       }
     }
   });

@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "types": ["node", "ws"],
@@ -14,5 +15,5 @@
       ]
     }
   },
-  "include": ["index.ts", "server.ts"]
+  "include": ["index.ts", "server.ts", "oral.ts"]
 }

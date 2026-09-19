@@ -1,21 +1,9 @@
-/**
- * Voice bridge WebSocket server — pure protocol, no pi dependency.
- *
- * Wire protocol (one JSON object per frame, spec §Protocole WS):
- *   client → extension:  hello, user_text, abort, set_verbosity, ping
- *   extension → client:  ready, say, narrate, state, turn_end, user_echo, error, pong
- *
- * A single client is served at a time; a new connection replaces the previous one.
- * Bound to 127.0.0.1 only so the mesh can never reach it directly.
- */
+/** Serveur WebSocket 127.0.0.1, protocole testable sans session Pi (spec §Protocole WS). */
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 
 export interface BridgeCallbacks {
-  /** Called for each validated `user_text`. Return a promise; resolved => `state working`, rejection => `state error`. */
   onUserText(text: string): Promise<void> | void;
-  /** Called on `abort` (client-side barge-in signal). */
   onAbort?(): void;
-  /** Called on `set_verbosity` with the requested level. */
   onSetVerbosity?(level: string): void;
 }
 
@@ -71,13 +59,11 @@ export class VoiceBridge {
     });
   }
 
-  /** Push an extension→client frame to the current client, if any. */
   emit(frame: object): void {
     this.client?.send(JSON.stringify(frame));
   }
 
   private admit(socket: WebSocket): void {
-    // Replace a previous client (one at a time)
     if (this.client && this.client.readyState === WebSocket.OPEN) {
       this.client.close(1001, "replaced");
     }
@@ -142,7 +128,6 @@ export class VoiceBridge {
       socket.send(JSON.stringify({ type: "state", phase: "error", reason: "empty text" }));
       return;
     }
-    // ack as soon as injection is accepted
     Promise.resolve()
       .then(() => this.cb.onUserText(text))
       .then(() => socket.send(JSON.stringify({ type: "state", phase: "working" })))
