@@ -3,7 +3,8 @@
 Extension Pi (composant A du pont vocal) — parler à la session Pi vivante en marchant.
 
 Couvre les tickets #1 (verrou + serveur WS base), #2 (`user_text` → injection), #3 (`say`,
-sous-titres du texte de Pi), #4 (`narrate`, narration d'outils) et #5 (descripteur).
+sous-titres du texte de Pi), #4 (`narrate`, narration d'outils), #5 (descripteur) et #6 (voix de
+sortie, deux voix).
 
 ## Fichiers
 
@@ -11,6 +12,8 @@ sous-titres du texte de Pi), #4 (`narrate`, narration d'outils) et #5 (descripte
 - `oral.ts` — segmentation en phrases + nettoyage oral des `text_delta` (pur, sans WS).
 - `narrate.ts` — gabarits FR d'outils, verbosité, regroupement 3 s, file derrière un say.
 - `describe.ts` — descripteur hors session (petit modèle), délai 2,5 s, budget, `allowCode`.
+- `voice.ts` — file FIFO say/narrate → TTS (deux voix), trames `audio` + binaire, barge-in.
+- `smoke_tts.ts` — vérification live contre le vrai proxy TTS (audio réel, pas un faux).
 - `index.ts` — extension Pi : `/voice on|off|status`, verrou, injection, sous-titres, auto-réactivation.
 - `*.test.ts` — tests aux deux seams de la spec (protocole WS + extension isolée).
 
@@ -60,6 +63,20 @@ au-delà de 4 noms « et N autres ». Verbosité par `set_verbosity` :
 Une narration produite pendant un say en cours est mise en file et dite à `message_end`, jamais
 insérée au milieu d'une phrase de Pi.
 
+## Voix de sortie (`audio`)
+
+Chaque `say`/`narrate` part au proxy TTS **déjà en place** (`paseo-tts-proxy` :8791, OpenAI
+`/v1/audio/speech` → Cartesia) avec une voix par nature : Henri pour Pi, Zoé pour la description.
+Le client reçoit une trame JSON `{ type: "audio", id, for, voice, format, sampleRate, bytes }`
+**suivie de la trame binaire** PCM s16le 24 kHz. Une synthèse à la fois (l'ordre est garanti), une
+phrase = un appel (le son part avant la fin de la réponse). `abort` (barge-in) vide la file et
+coupe la synthèse en cours, jamais le run Pi. Échec TTS → trame `error` (`scope: "tts"`), pas de
+silence muet.
+
+```bash
+node --experimental-strip-types smoke_tts.ts   # 4 en-têtes audio / 4 trames binaires, 2 voix
+```
+
 `user_text` → `pi.sendUserMessage(text, { deliverAs: "followUp" })` : pendant un run Pi, la
 parole est mise en file (followUp), elle ne coupe pas le run. Source distinguée
 (`event.source === "extension"`), accusé `state phase=working`.
@@ -68,7 +85,7 @@ parole est mise en file (followUp), elle ne coupe pas le run. Source distinguée
 
 ```bash
 cd extension/pi-voice-bridge
-node --experimental-strip-types --test *.test.ts                     # 34/34
+node --experimental-strip-types --test *.test.ts                     # 39/39
 npx tsc                                                             # 0 erreur
 ```
 
@@ -78,3 +95,5 @@ npx tsc                                                             # 0 erreur
 - `PI_VOICE_BRIDGE_PORT` — port (défaut 8766, libre — 8765 pris par edge-tts).
 - `PI_VOICE_BRIDGE_DESCRIBER_PROVIDER` / `_MODEL` — descripteur (défaut anthropic / claude-haiku-4-5).
 - `PI_VOICE_BRIDGE_ALLOW_CODE=1` — autorise l'envoi de code au descripteur (défaut : non).
+- `PI_VOICE_BRIDGE_TTS_URL` — endpoint TTS (défaut `http://127.0.0.1:8791/v1/audio/speech`).
+- `PI_VOICE_BRIDGE_VOICE_PI` / `_VOICE_DESC` — ids de voix Cartesia (défaut Henri / Zoé).

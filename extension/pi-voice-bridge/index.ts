@@ -9,6 +9,7 @@ import { VoiceBridge } from "./server.ts";
 import { Subtitler } from "./oral.ts";
 import { Narrator } from "./narrate.ts";
 import { Describer } from "./describe.ts";
+import { VoiceOut } from "./voice.ts";
 
 const DIR = join(homedir(), ".pi", "voice-bridge");
 const ACTIVE = join(DIR, "active.json");
@@ -27,13 +28,30 @@ let lock: Lock | null = null;
 let subtitler: Subtitler | null = null;
 let narrator: Narrator | null = null;
 let describer: Describer | null = null;
+let voice: VoiceOut | null = null;
 let frameSeq = 0;
 let lastSayId = "";
 
 function emitFrame(type: "say" | "narrate", text: string, replaces?: string): string {
   const id = `f${++frameSeq}`;
   bridge?.emit(replaces ? { type, id, text, replaces } : { type, id, text });
+  voice?.speak(type, id, text);
   return id;
+}
+
+const VOICE_PI = "d9f4af15-c402-4f50-bbda-d8823d028d6a";
+const VOICE_DESC = "b56a7171-86f0-42b6-b3fa-a316794aa4e0";
+
+function makeVoice(): VoiceOut {
+  return new VoiceOut({
+    endpoint: process.env.PI_VOICE_BRIDGE_TTS_URL ?? "http://127.0.0.1:8791/v1/audio/speech",
+    voices: {
+      say: process.env.PI_VOICE_BRIDGE_VOICE_PI ?? VOICE_PI,
+      narrate: process.env.PI_VOICE_BRIDGE_VOICE_DESC ?? VOICE_DESC,
+    },
+    out: (header, audio) => bridge?.emitAudio(header, audio),
+    onError: (reason) => bridge?.emit({ type: "error", scope: "tts", reason }),
+  });
 }
 
 function makeDescriber(ctx: ExtensionContext): Describer | null {
@@ -132,10 +150,12 @@ async function startBridge(pi: ExtensionAPI, ctx: ExtensionContext): Promise<num
       ctx.ui.notify(`verbosity → ${applied ?? level}`, "info");
     },
     onAbort() {
+      voice?.cancel();
       ctx.ui.notify("abort reçu (barge-in)", "info");
     },
   });
   describer = makeDescriber(ctx);
+  voice = makeVoice();
   subtitler = new Subtitler(
     (text) => {
       lastSayId = emitFrame("say", text);
@@ -153,6 +173,8 @@ async function stopBridge(): Promise<void> {
   narrator?.close();
   narrator = null;
   describer = null;
+  voice?.cancel();
+  voice = null;
   if (bridge) {
     await bridge.close();
     bridge = null;

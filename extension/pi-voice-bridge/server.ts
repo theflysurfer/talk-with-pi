@@ -60,7 +60,13 @@ export class VoiceBridge {
   }
 
   emit(frame: object): void {
-    this.client?.send(JSON.stringify(frame));
+    if (this.client?.readyState === WebSocket.OPEN) this.client.send(JSON.stringify(frame));
+  }
+
+  emitAudio(header: object, audio: Uint8Array): void {
+    if (this.client?.readyState !== WebSocket.OPEN) return;
+    this.client.send(JSON.stringify(header));
+    this.client.send(audio, { binary: true });
   }
 
   private admit(socket: WebSocket): void {
