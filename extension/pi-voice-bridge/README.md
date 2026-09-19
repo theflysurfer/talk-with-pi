@@ -15,13 +15,17 @@ sortie, deux voix) et #7 (voix d'entrée, STT).
 - `voice.ts` — file FIFO say/narrate → TTS (deux voix), trames `audio` + binaire, barge-in.
 - `stt.ts` — audio du client → `/v1/audio/transcriptions` (Groq whisper) → texte.
 - `smoke_tts.ts` / `smoke_stt.ts` — vérifications live contre les vrais proxys (audio réel).
+- `smoke_e2e.ts` — bout en bout : vraie session Pi (RPC) → `/voice on` → WS → `user_text` → `say` → audio.
 - `index.ts` — extension Pi : `/voice on|off|status`, verrou, injection, sous-titres, auto-réactivation.
 - `*.test.ts` — tests aux deux seams de la spec (protocole WS + extension isolée).
 
 ## Usage
 
+L'extension est **installée globalement** (`pi install <chemin du dossier>`) : `/voice` existe dans
+toute session Pi, y compris celles de pi-web. Le verrou garantit qu'une seule session porte la voix.
+
 ```bash
-# charger l'extension dans une session Pi vivante
+# ou, ponctuellement, sans installation globale
 pi -e ./extension/pi-voice-bridge/index.ts
 
 # dans la session
@@ -87,6 +91,7 @@ injecte le texte comme un message tapé : trame `user_echo`, puis `sendUserMessa
 
 ```bash
 node --experimental-strip-types smoke_stt.ts /tmp/utt.wav   # user_echo + injection réelle
+node --experimental-strip-types smoke_e2e.ts                # vraie session Pi : say + audio reçus
 ```
 
 `user_text` → `pi.sendUserMessage(text, { deliverAs: "followUp" })` : pendant un run Pi, la
