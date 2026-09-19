@@ -10,6 +10,7 @@ import { Subtitler } from "./oral.ts";
 import { Narrator } from "./narrate.ts";
 import { Describer } from "./describe.ts";
 import { VoiceOut } from "./voice.ts";
+import { Stt } from "./stt.ts";
 
 const DIR = join(homedir(), ".pi", "voice-bridge");
 const ACTIVE = join(DIR, "active.json");
@@ -29,6 +30,7 @@ let subtitler: Subtitler | null = null;
 let narrator: Narrator | null = null;
 let describer: Describer | null = null;
 let voice: VoiceOut | null = null;
+let stt: Stt | null = null;
 let frameSeq = 0;
 let lastSayId = "";
 
@@ -141,9 +143,24 @@ async function startBridge(pi: ExtensionAPI, ctx: ExtensionContext): Promise<num
   await mkdir(DIR, { recursive: true });
   await acquireLock(ctx, port, token);
 
+  stt = new Stt({
+    endpoint: process.env.PI_VOICE_BRIDGE_STT_URL ?? "http://127.0.0.1:8792/v1/audio/transcriptions",
+    model: process.env.PI_VOICE_BRIDGE_STT_MODEL,
+  });
+
   bridge = new VoiceBridge(port, token, {
     async onUserText(text: string) {
       pi.sendUserMessage(text, { deliverAs: "followUp" });
+    },
+    async onAudio(audio: Uint8Array, mime: string) {
+      const text = (await stt!.transcribe(audio, mime)).trim();
+      if (!text) {
+        bridge?.emit({ type: "error", scope: "stt", reason: "transcription vide" });
+        return;
+      }
+      bridge?.emit({ type: "user_echo", text });
+      pi.sendUserMessage(text, { deliverAs: "followUp" });
+      bridge?.emit({ type: "state", phase: "working" });
     },
     onSetVerbosity(level: string) {
       const applied = narrator?.setVerbosity(level);
@@ -175,6 +192,7 @@ async function stopBridge(): Promise<void> {
   describer = null;
   voice?.cancel();
   voice = null;
+  stt = null;
   if (bridge) {
     await bridge.close();
     bridge = null;

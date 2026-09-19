@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 
 export interface BridgeCallbacks {
   onUserText(text: string): Promise<void> | void;
+  onAudio?(audio: Uint8Array, mime: string): Promise<void> | void;
   onAbort?(): void;
   onSetVerbosity?(level: string): void;
 }
@@ -27,6 +28,7 @@ interface Ping {
 export class VoiceBridge {
   private readonly wss: WebSocketServer;
   private client: WebSocket | null = null;
+  private nextMime = "audio/webm";
   private readonly token: string;
   private readonly cb: BridgeCallbacks;
 
@@ -75,7 +77,10 @@ export class VoiceBridge {
     }
     this.client = socket;
 
-    socket.on("message", (data) => this.onMessage(socket, data));
+    socket.on("message", (data, isBinary) => {
+      if (isBinary) this.onAudio(socket, data as Buffer);
+      else this.onMessage(socket, data);
+    });
     socket.on("close", () => {
       if (this.client === socket) this.client = null;
     });
@@ -107,6 +112,9 @@ export class VoiceBridge {
       case "user_text":
         this.userText(socket, frame as UserText);
         break;
+      case "speech":
+        this.nextMime = (frame as { mime?: string }).mime ?? "audio/webm";
+        break;
       case "abort":
         this.cb.onAbort?.();
         break;
@@ -116,6 +124,26 @@ export class VoiceBridge {
       default:
         socket.close(1003, "unknown type");
     }
+  }
+
+  private onAudio(socket: WebSocket, data: Buffer): void {
+    const mime = this.nextMime;
+    this.nextMime = "audio/webm";
+    if (!this.cb.onAudio) {
+      socket.send(JSON.stringify({ type: "error", scope: "stt", reason: "audio non pris en charge" }));
+      return;
+    }
+    Promise.resolve()
+      .then(() => this.cb.onAudio!(new Uint8Array(data), mime))
+      .catch((err: unknown) =>
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            scope: "stt",
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+      );
   }
 
   private hello(socket: WebSocket, frame: Hello): void {

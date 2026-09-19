@@ -4,7 +4,7 @@ Extension Pi (composant A du pont vocal) — parler à la session Pi vivante en 
 
 Couvre les tickets #1 (verrou + serveur WS base), #2 (`user_text` → injection), #3 (`say`,
 sous-titres du texte de Pi), #4 (`narrate`, narration d'outils), #5 (descripteur) et #6 (voix de
-sortie, deux voix).
+sortie, deux voix) et #7 (voix d'entrée, STT).
 
 ## Fichiers
 
@@ -13,7 +13,8 @@ sortie, deux voix).
 - `narrate.ts` — gabarits FR d'outils, verbosité, regroupement 3 s, file derrière un say.
 - `describe.ts` — descripteur hors session (petit modèle), délai 2,5 s, budget, `allowCode`.
 - `voice.ts` — file FIFO say/narrate → TTS (deux voix), trames `audio` + binaire, barge-in.
-- `smoke_tts.ts` — vérification live contre le vrai proxy TTS (audio réel, pas un faux).
+- `stt.ts` — audio du client → `/v1/audio/transcriptions` (Groq whisper) → texte.
+- `smoke_tts.ts` / `smoke_stt.ts` — vérifications live contre les vrais proxys (audio réel).
 - `index.ts` — extension Pi : `/voice on|off|status`, verrou, injection, sous-titres, auto-réactivation.
 - `*.test.ts` — tests aux deux seams de la spec (protocole WS + extension isolée).
 
@@ -77,6 +78,17 @@ silence muet.
 node --experimental-strip-types smoke_tts.ts   # 4 en-têtes audio / 4 trames binaires, 2 voix
 ```
 
+## Voix d'entrée (trame binaire → `user_text`)
+
+Le client envoie `{ type: "speech", mime: "audio/webm" }` **puis la trame binaire** de l'audio micro.
+L'extension transcrit via `paseo-stt-proxy` :8792 (Groq whisper-large-v3-turbo, français) et
+injecte le texte comme un message tapé : trame `user_echo`, puis `sendUserMessage(followUp)`, puis
+`state phase=working`. Transcription vide ou erreur STT → trame `error` (`scope: "stt"`).
+
+```bash
+node --experimental-strip-types smoke_stt.ts /tmp/utt.wav   # user_echo + injection réelle
+```
+
 `user_text` → `pi.sendUserMessage(text, { deliverAs: "followUp" })` : pendant un run Pi, la
 parole est mise en file (followUp), elle ne coupe pas le run. Source distinguée
 (`event.source === "extension"`), accusé `state phase=working`.
@@ -85,7 +97,7 @@ parole est mise en file (followUp), elle ne coupe pas le run. Source distinguée
 
 ```bash
 cd extension/pi-voice-bridge
-node --experimental-strip-types --test *.test.ts                     # 39/39
+node --experimental-strip-types --test *.test.ts                     # 43/43
 npx tsc                                                             # 0 erreur
 ```
 
@@ -97,3 +109,4 @@ npx tsc                                                             # 0 erreur
 - `PI_VOICE_BRIDGE_ALLOW_CODE=1` — autorise l'envoi de code au descripteur (défaut : non).
 - `PI_VOICE_BRIDGE_TTS_URL` — endpoint TTS (défaut `http://127.0.0.1:8791/v1/audio/speech`).
 - `PI_VOICE_BRIDGE_VOICE_PI` / `_VOICE_DESC` — ids de voix Cartesia (défaut Henri / Zoé).
+- `PI_VOICE_BRIDGE_STT_URL` / `_STT_MODEL` — endpoint STT (défaut :8792) et modèle Groq.
