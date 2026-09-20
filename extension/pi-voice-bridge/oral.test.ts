@@ -50,7 +50,7 @@ test("markdown retiré, un item de puce = une phrase", () => {
 });
 
 test("secret jamais émis à l'oral", () => {
-  const key = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+  const key = ["sk", "ant", "api03", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
   const said = collect([`La clé est ${key} et password: hunter2 voilà.\n`]);
   const all = said.join(" ");
   assert.ok(!all.includes(key));
